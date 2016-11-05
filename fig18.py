@@ -275,8 +275,7 @@ def Ftrminmax(lK, Rg, alpha, betas, beta, delta, omegat, pos):
     b = np.amax(Ftrxsum(lK, Rg, alpha, betas, beta, delta, omegat, pos))
     c = np.amin(Ftrysum(lK, Rg, alpha, betas, beta, delta, omegat, pos))
     d = np.amax(Ftrysum(lK, Rg, alpha, betas, beta, delta, omegat, pos))
-#    print np.abs(a+b)+np.abs(c+d)
-    return (np.abs(a+b)+np.abs(c+d))
+    return (np.abs(b-a)+np.abs(d-c)+np.abs(a+b)+np.abs(c+d))
             
 def fopt(f, lK, Rg, alpha, betas, beta, delta, omegat, pos):
     def foptfixed(p):
@@ -285,7 +284,11 @@ def fopt(f, lK, Rg, alpha, betas, beta, delta, omegat, pos):
     
 
 def orientation(lK, Rg, alpha, betas, beta, delta, omegat, pos):
-    guess = [ alpha, betas ] # can be improved by passing proving
+    # It is very important to start the iterative solution with alpha=0.0 as initial guess 
+    # such that the iterative optimizer approaches the solution from the "good" side (horizontal rotor).
+    # Especially for configurations at the validity limit with tethers being perpendicular to the
+    # rotor axis this is crucial for stable iterative solution.
+    guess = [ 0.0, betas ]
     return fmin(fopt(Ftrminmax, lK, Rg, alpha, betas, beta, delta, omegat, pos), guess, xtol=0.00000001, ftol=0.00000001, maxiter=1000)
     
 # mean aerodynamic moment over one cycle
@@ -293,8 +296,7 @@ def Marzmean(lK, Rg, alpha, betas, beta, delta):
     pos          = np.array([ 0, 0.5*np.pi, np.pi, 1.5*np.pi ])
     omegat       = np.arange(0, 360, 1)
     alpha, betas = orientation(lK, Rg, alpha, betas, beta, delta, omegat, pos)
-#    h            = np.sin(beta)*lK - np.sin(alpha)
-    return alpha, np.mean(Marzsum(lK, Rg, alpha, betas, beta, delta, omegat, pos))
+    return alpha, np.mean(Marzsum(lK, Rg, alpha, betas, beta, delta, omegat, pos)), Ftrminmax(lK, Rg, alpha, betas, beta, delta, omegat, pos)
     
 vMarzmean  = np.vectorize(Marzmean)
 
@@ -306,15 +308,11 @@ betas  = np.radians(0)
 delta  = np.radians(45)
 N      = 4
 
-# Test to compare with Fig. 17
-a, Ma = vMarzmean(2.0, 1.0, alpha, betas, beta, delta)
-print "Ma = ", Ma, " alpha = ", np.degrees(a), " betas = ",np.degrees(betas)
-
-lK     = np.arange(1.0, 5.2, 0.5) # 0.02 is for print quality
-Rg     = np.arange(0.0, 3.2, 0.5) # 0.02 is for print quality
+lK     = np.arange(1.0, 5.2, 0.02) # 0.02 is for print quality
+Rg     = np.arange(0.0, 3.2, 0.02) # 0.02 is for print quality
 x, y   = np.meshgrid(lK, Rg)
 
-a, z   = vMarzmean(x, y, alpha, betas, beta, delta)
+a, z, f   = vMarzmean(x, y, alpha, betas, beta, delta)
 h      = np.sin(beta)*lK - np.sin(a)
 h1     = np.sin(beta)*lK - np.sin(a)*1.5
 h2     = np.sin(beta)*lK - np.sin(a)*2.0
@@ -324,13 +322,19 @@ h3     = np.sin(beta)*lK - np.sin(a)*2.5
 zm     = scipy.ndimage.zoom(z, 3)
 xx     = scipy.ndimage.zoom(x, 3)
 yy     = scipy.ndimage.zoom(y, 3)
+ff     = scipy.ndimage.zoom(f, 3)
 hh     = scipy.ndimage.zoom(h, 3)
 hh1    = scipy.ndimage.zoom(h1, 3)
 hh2    = scipy.ndimage.zoom(h2, 3)
 hh3    = scipy.ndimage.zoom(h3, 3)
 
-# mask h<0 
-zm     = ma.masked_array(zm, mask=(hh < 0.))
+# mask h<0 or too large transverse forces
+ffmax  = 10.0
+zm     = ma.masked_array(zm, mask=(np.logical_or((hh < 0.0), (ff > ffmax))))
+hh     = ma.masked_array(hh, mask=(ff > ffmax))
+hh1    = ma.masked_array(hh1, mask=(ff > ffmax))
+hh2    = ma.masked_array(hh2, mask=(ff > ffmax))
+hh3    = ma.masked_array(hh3, mask=(ff > ffmax))
 
 fig, ax = plt.subplots()
 
@@ -347,13 +351,23 @@ CS2 = plt.contour(xx, yy, hh, colors='r', linestyles='dotted', levels=[0.0])
 CS3 = plt.contour(xx, yy, hh1, colors='r', linestyles='dotted', levels=[0.0])
 CS4 = plt.contour(xx, yy, hh2, colors='r', linestyles='dotted', levels=[0.0])
 CS5 = plt.contour(xx, yy, hh3, colors='r', linestyles='dotted', levels=[0.0])
+CS6 = plt.contour(xx, yy, ff, colors='b', linestyles='dashed', levels=[10.0])
 plt.clabel(CS1, inline=1, fontsize=14, manual=locations, fmt='%1.1f')
 plt.clabel(CS2, inline=1, fontsize=14, manual=loc, fmt=FormatFaker('1.0'))
 plt.clabel(CS3, inline=1, fontsize=14, manual=loc1, fmt=FormatFaker('1.5'))
 plt.clabel(CS4, inline=1, fontsize=14, manual=loc2, fmt=FormatFaker('2.0'))
 plt.clabel(CS5, inline=1, fontsize=14, manual=loc3, fmt=FormatFaker('2.5'))
+#plt.clabel(CS6, inline=1, fontsize=14, manual=loc3, fmt=FormatFaker('limit'))
 # reference
 plt.plot([1.732,1.732], [0.0,3.0],  color='0.6', linestyle='--')
+# high-resolution limit calculation with delta_omega = 0.1
+x = [1.00, 1.10, 1.20, 1.30, 1.40, 1.50, 1.60, 1.70, 1.80, 1.90, 2.00, 2.20, 2.40, 2.60]
+y = [1.15, 1.28, 1.38, 1.50, 1.61, 1.73, 1.84, 1.96, 2.07, 2.19, 2.31, 2.54, 2.77, 2.99]
+M = [1.52, 1.50, 1.42, 0.97, 1.34, 0.98, 1.27, 1.25, 1.22, 1.21, 1.20, 1.67, 1.14, 1.12]
+plt.plot(x, y,  color='k', linestyle='-')
+plt.plot([0.0,3.0], [0.0,3.0/np.cos(beta)],  color='r', linestyle='--')
+plt.plot([1.732,1.732], [0.0,3.0],  color='0.6', linestyle='--')
+plt.scatter(5, 1.25, marker='o', s=80, linewidth=1.2, edgecolor='k', facecolor='w')
 plt.xlim(1.0,5.0)
 plt.ylim(0.0,3.0)
 plt.xticks(np.arange(1.0,5.01,1.0))
@@ -363,6 +377,10 @@ ax.xaxis.set_minor_locator(minorLocator)
 ax.yaxis.set_minor_locator(minorLocator)
 plt.xlabel(r"Relative distance between rotor centers \$\lK/\Rk\, [-]\$",labelpad=10)
 plt.ylabel(r"Rotor size ratio \$\Rg/\Rk\, [-]\$",labelpad=10)
+
+# Test to compare with Fig. 17
+a, Ma, f = vMarzmean(5.0, 1.25, alpha, betas, beta, delta)
+print "Ma = ", Ma, " alpha = ", np.degrees(a), " betas = ",np.degrees(betas), "Rko/Rk = ",lK*np.sin(beta)/np.sin(a)
 
 # Save as SVG file
 plt.subplots_adjust(left=0.07, bottom=None, right=0.93, top=None, wspace=None, hspace=None)

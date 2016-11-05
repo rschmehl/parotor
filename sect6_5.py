@@ -318,7 +318,7 @@ N      = 4
 lK     = 100.
 beta   = np.radians(30)
 omega  = 2.05
-delta  = np.radians(35)
+delta  = np.radians(45)
 Pnom   = 1.4e6
 rho    = 1.225
 
